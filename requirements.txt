@@ -1,0 +1,21 @@
+# Web Framework & Interface
+streamlit>=1.30.0
+
+# Pengolahan Data & Geospasial
+pandas>=2.0.0
+geopandas>=0.14.0
+shapely>=2.0.0
+pyproj>=3.6.0
+
+# Manipulasi File Excel (Export Formatting & Tagging)
+openpyxl>=3.1.0
+
+# Visualisasi Peta Interaktif di Streamlit
+folium>=0.15.0
+streamlit-folium>=0.18.0
+
+# Pustaka Bawaan Python (Tidak Perlu Install via Pip):
+# - xml.etree.ElementTree (Untuk parsing XML KML)
+# - zipfile (Untuk unzipping & zipping file KMZ)
+# - io (Untuk buffer memory BytesIO)
+# - re (Untuk RegEx matching penamaan closure & aksesori)
