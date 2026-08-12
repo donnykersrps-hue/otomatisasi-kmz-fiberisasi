@@ -7,19 +7,18 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 
 # -----------------------------------------------------------------------------
-# CONFIGURATION & PAGE SETUP
+# PAGE CONFIGURATION
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="KMZ Spatial Engine & Data Tagging Tool",
+    page_title="KMZ Intelligent Classifier & Data Tagging",
     page_icon="🗺️",
     layout="wide"
 )
 
 # -----------------------------------------------------------------------------
-# HELPER: LOAD EXTERNAL PROMPT / RULE FILE
+# LOAD EXTERNAL PROMPT / RULES
 # -----------------------------------------------------------------------------
 def load_external_rules(rule_filepath: str = "Command_prompt.txt") -> str:
-    """Membaca file aturan/prompt luar jika tersedia."""
     if os.path.exists(rule_filepath):
         try:
             with open(rule_filepath, "r", encoding="utf-8") as f:
@@ -31,232 +30,233 @@ def load_external_rules(rule_filepath: str = "Command_prompt.txt") -> str:
 EXTERNAL_RULES = load_external_rules()
 
 # -----------------------------------------------------------------------------
-# GEOSPATIAL CLASSIFIER ENGINE (EXTERNAL PROMPT DRIVEN)
+# MULTI-CLASSIFICATION & TEXT NORMALIZATION ENGINE
 # -----------------------------------------------------------------------------
-class SpatialEntityClassifier:
+class KMZIntelligentClassifier:
     """
-    Engine pakar untuk mengklasifikasi entitas geospasial, membersihkan nama,
-    dan mengarahkan placemark ke hirarki subfolder yang presisi.
+    Engine Klasifikasi Cerdas Berdasarkan Spesifikasi Command_prompt.txt:
+    - Multi-classification (Satu Placemark bisa masuk beberapa worksheet)
+    - Normalisasi teks & Regex toleran variasi (NP7, NP 7, NP-7, NP_7)
+    - Konteks hirarki folder (Document -> Backbone -> Pole -> Existing)
     """
-    def __init__(self, site_name: str):
-        self.site_name = site_name
 
-    def classify(self, raw_name: str, raw_desc: str, geom_type: str) -> dict:
-        name = raw_name.strip() if raw_name else ""
-        desc = raw_desc.strip() if raw_desc else ""
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        if not text:
+            return ""
+        return re.sub(r'\s+', ' ', text.strip().lower())
 
-        info = {
-            "clean_name": name,
-            "target_folder": "04_SITE & ODP/OTB",
-            "target_subfolder": "Uncategorized",
-            "is_pole_accessory": False,
-            "generate_slack": False,
-            "object_type": geom_type,
-            "tag_status": "NEW"
+    def classify_placemark(self, name: str, folder_path: str, desc: str) -> dict:
+        norm_name = self.normalize_text(name)
+        norm_folder = self.normalize_text(folder_path)
+        norm_desc = self.normalize_text(desc)
+        combined_context = f"{norm_folder} {norm_name} {norm_desc}"
+
+        is_existing = any(kw in combined_context for kw in ["existing", "eks", "old", "ex", "exist"])
+
+        categories = {
+            "Tiang": [],
+            "Acc Tiang": [],
+            "Slag Kabel": [],
+            "Closure": [],
+            "OTB, ODP": []
         }
 
-        # 1. Aturan Closure
-        if re.search(r'\b(cls|cl|closure)[\s_-]*48\b', name, re.IGNORECASE):
-            info["clean_name"] = "New Closure 48C"
-            info["target_folder"] = "03_CLOSURE & SLACK"
-            info["target_subfolder"] = "Closure"
-            return info
-
-        if re.search(r'\b(cls|cl|closure)[\s_-]*24\b', name, re.IGNORECASE):
-            info["clean_name"] = "New Closure 24C"
-            info["target_folder"] = "03_CLOSURE & SLACK"
-            info["target_subfolder"] = "Closure"
-            return info
-
-        if re.search(r'\b(cls|cl|closure)\b', name, re.IGNORECASE):
-            info["clean_name"] = name if name.startswith("New") else f"New {name}"
-            info["target_folder"] = "03_CLOSURE & SLACK"
-            info["target_subfolder"] = "Closure"
-            return info
-
-        # 2. Aturan Tiang & Aksesori (Pole, Smartbox, New Slack Support)
-        is_pole = re.search(r'\b(p7m|p9m|te|tiang|pole)\b', name, re.IGNORECASE)
-        has_acc = "aksesori" in name.lower() or "aksesori" in desc.lower() or "acc" in name.lower() or "accessories" in desc.lower()
-
+        # 1. KLASIFIKASI TIANG
+        is_pole = any(kw in combined_context for kw in ["np", "te", "pole", "tiang"])
         if is_pole:
-            info["target_folder"] = "02_POLE & ACCESSORIES"
-            if re.search(r'\bp7m\b', name, re.IGNORECASE):
-                info["target_subfolder"] = "New Pole 7M"
-            elif re.search(r'\bp9m\b', name, re.IGNORECASE):
-                info["target_subfolder"] = "New Pole 9M"
+            # Tentukan REMARK jenis tiang
+            pole_match = re.search(r'\b(np|pole)[\s_-]*(\d+)\b', combined_context)
+            if pole_match:
+                height = pole_match.group(2)
+                remark_tiang = f"New Pole {height}M" if not is_existing else f"Pole Existing {height}M"
+            elif "7" in combined_context or "p7m" in combined_context:
+                remark_tiang = "New Pole 7M" if not is_existing else "Pole Existing"
+            elif "9" in combined_context or "p9m" in combined_context:
+                remark_tiang = "New Pole 9M" if not is_existing else "Pole Existing"
             else:
-                info["target_subfolder"] = "Existing Pole"
+                remark_tiang = "Pole Existing" if is_existing else "New Pole"
 
-            if has_acc:
-                info["is_pole_accessory"] = True
-                info["generate_slack"] = True
-            return info
+            marking_tiang = name if name else "Pole"
+            categories["Tiang"].append({"MARKING": marking_tiang, "REMARK": remark_tiang})
 
-        # 3. Aturan Route & Kabel
-        if geom_type == "LineString" or re.search(r'\b(cable|kabel|route|feeder)\b', name, re.IGNORECASE):
-            info["target_folder"] = "01_ROUTE & CABLE"
-            if "ug" in name.lower() or "underground" in name.lower():
-                info["target_subfolder"] = "UG Cable"
-                info["clean_name"] = "UG Cable NEW" if "new" in name.lower() else "UG Cable EXT"
+            # Multi-classification: Tiang otomatis masuk ke Acc Tiang
+            categories["Acc Tiang"].append({"MARKING": marking_tiang, "REMARK": f"Acc {remark_tiang}"})
+
+        # 2. KLASIFIKASI SLAG KABEL / SLACK
+        is_slack = any(kw in combined_context for kw in ["slag", "slack", "slak", "slk", "hanger", "hgr"])
+        if is_slack:
+            remark_slack = "Eks Slack Support" if is_existing else "New Slack Support"
+            categories["Slag Kabel"].append({"MARKING": "Slack Support", "REMARK": remark_slack})
+
+        # 3. KLASIFIKASI CLOSURE
+        is_closure = any(kw in combined_context for kw in ["closure", "clo", "cls", "clsr"])
+        if is_closure:
+            remark_closure = "Eks Closure" if is_existing else "New Closure"
+            # Deteksi kapasitas closure jika ada
+            if "48" in combined_context:
+                marking_closure = "CL48"
+            elif "24" in combined_context:
+                marking_closure = "CL24"
             else:
-                info["target_subfolder"] = "Aerial Cable"
-                info["clean_name"] = "Aerial Cable NEW" if "new" in name.lower() else "Aerial Cable EXT"
-            return info
+                marking_closure = "CL24"
 
-        # 4. Aturan Slack / Hanger
-        if re.search(r'\b(slack|hanger)\b', name, re.IGNORECASE):
-            info["target_folder"] = "03_CLOSURE & SLACK"
-            info["target_subfolder"] = "Slack / Hanger"
-            info["clean_name"] = "New Slack Support" if "new" in name.lower() or has_acc else "Existing Slack NEW"
-            return info
+            categories["Closure"].append({"MARKING": marking_closure, "REMARK": remark_closure})
 
-        return info
+        # 4. KLASIFIKASI OTB / ODP
+        is_otb_odp = any(kw in combined_context for kw in ["otb", "odp", "acpbd", "dp"])
+        if is_otb_odp:
+            marking_otb = desc if desc else name
+            categories["OTB, ODP"].append({"MARKING": marking_otb, "REMARK": name})
+
+        return categories
 
 # -----------------------------------------------------------------------------
-# MEMORY KML / KMZ PROCESSOR
+# PARSER KML/KMZ DENGAN SIMPAN HIRARKI FOLDER
 # -----------------------------------------------------------------------------
-def process_kml_bytes(kml_bytes: bytes, site_name: str) -> tuple[bytes, list]:
-    classifier = SpatialEntityClassifier(site_name)
-    tree = ET.fromstring(kml_bytes)
+def parse_kml_hierarchy(kml_content: bytes, filename: str) -> dict:
+    classifier = KMZIntelligentClassifier()
+    tree = ET.fromstring(kml_content)
     ns = {'kml': 'http://www.opengis.net/kml/2.2'}
-    ET.register_namespace('', 'http://www.opengis.net/kml/2.2')
+    
+    worksheets_data = {
+        "Tiang": [],
+        "Acc Tiang": [],
+        "Slag Kabel": [],
+        "Closure": [],
+        "OTB, ODP": []
+    }
 
-    records = []
+    def walk_element(element, folder_path="Document"):
+        # Ambil nama folder/document jika ada
+        name_node = element.find('kml:name', ns)
+        elem_name = name_node.text.strip() if name_node is not None and name_node.text else ""
 
-    for placemark in tree.findall('.//kml:Placemark', ns):
-        name_node = placemark.find('kml:name', ns)
-        desc_node = placemark.find('kml:description', ns)
-        
-        raw_name = name_node.text if name_node is not None and name_node.text else ""
-        raw_desc = desc_node.text if desc_node is not None and desc_node.text else ""
+        current_path = f"{folder_path} -> {elem_name}" if elem_name else folder_path
 
-        # Deteksi Jenis Geometri
-        geom_type = "Point"
-        if placemark.find('.//kml:LineString', ns) is not None:
-            geom_type = "LineString"
-        elif placemark.find('.//kml:Polygon', ns) is not None:
-            geom_type = "Polygon"
+        # Jika elemen adalah Placemark
+        if element.tag.endswith('Placemark'):
+            desc_node = element.find('kml:description', ns)
+            desc_text = desc_node.text.strip() if desc_node is not None and desc_node.text else ""
 
-        # Ekstraksi Koordinat
-        coords = ""
-        coord_node = placemark.find('.//kml:coordinates', ns)
-        if coord_node is not None and coord_node.text:
-            coords = coord_node.text.strip().split()[0]
-        
-        parts = coords.split(',')
-        lon = parts[0] if len(parts) > 0 else ""
-        lat = parts[1] if len(parts) > 1 else ""
+            # Ekstraksi Koordinat (Longitude, Latitude)
+            coord_node = element.find('.//kml:coordinates', ns)
+            lat, lon = "", ""
+            if coord_node is not None and coord_node.text:
+                raw_coords = coord_node.text.strip().split()[0].split(',')
+                if len(raw_coords) >= 2:
+                    lon = raw_coords[0].strip()
+                    lat = raw_coords[1].strip()
 
-        # Klasifikasi & Standarisasi Nama/Folder
-        res = classifier.classify(raw_name, raw_desc, geom_type)
+            # Jalankan Multi-Classification
+            classified_results = classifier.classify_placemark(elem_name, current_path, desc_text)
 
-        # Update nama placemark
-        if name_node is not None:
-            name_node.text = res["clean_name"]
+            for sheet_name, entries in classified_results.items():
+                for entry in entries:
+                    worksheets_data[sheet_name].append({
+                        "MARKING": entry["MARKING"],
+                        "LAT": lat,
+                        "LONG": lon,
+                        "REMARK": entry["REMARK"]
+                    })
 
-        # Efek Domino: Jika tiang ber-aksesori -> tambahkan deskripsi Smartbox & Slack
-        if res["is_pole_accessory"]:
-            add_desc = "\n[Smartbox Created: New Slack Support with Tolerance]"
-            if desc_node is None:
-                desc_node = ET.SubElement(placemark, 'description')
-                desc_node.text = add_desc.strip()
-            else:
-                desc_node.text = (raw_desc + add_desc).strip()
+        # Recursive walk untuk Folder & Document
+        for child in element:
+            if child.tag.endswith(('Folder', 'Document', 'Placemark')):
+                walk_element(child, current_path)
 
-        records.append({
-            "Folder Group": res["target_folder"],
-            "Sub Folder": res["target_subfolder"],
-            "Tagging Name (Clean)": res["clean_name"],
-            "Original Field Name": raw_name,
-            "Object Type": geom_type,
-            "Latitude": lat,
-            "Longitude": lon,
-            "Cable Length (Meter)": 0.0,
-            "Description": raw_desc
-        })
+    walk_element(tree)
+    return worksheets_data
 
-    out_kml = ET.tostring(tree, encoding='utf-8', xml_declaration=True)
-    return out_kml, records
-
-def process_kmz_in_memory(uploaded_file, site_name: str):
+def process_kmz_file(uploaded_file):
     in_bytes = io.BytesIO(uploaded_file.getvalue())
-    out_bytes = io.BytesIO()
-    all_records = []
+    all_worksheets = {
+        "Tiang": [],
+        "Acc Tiang": [],
+        "Slag Kabel": [],
+        "Closure": [],
+        "OTB, ODP": []
+    }
 
-    with zipfile.ZipFile(in_bytes, 'r') as in_zip:
-        with zipfile.ZipFile(out_bytes, 'w', compression=zipfile.ZIP_DEFLATED) as out_zip:
-            for item in in_zip.infolist():
-                data = in_zip.read(item.filename)
-                if item.filename.endswith('.kml'):
-                    proc_kml, recs = process_kml_bytes(data, site_name)
-                    out_zip.writestr(item.filename, proc_kml)
-                    all_records.extend(recs)
-                else:
-                    out_zip.writestr(item, data)
+    with zipfile.ZipFile(in_bytes, 'r') as zip_ref:
+        for file_info in zip_ref.infolist():
+            if file_info.filename.endswith('.kml'):
+                kml_data = zip_ref.read(file_info.filename)
+                parsed_sheets = parse_kml_hierarchy(kml_data, uploaded_file.name)
+                for sheet, rows in parsed_sheets.items():
+                    all_worksheets[sheet].extend(rows)
 
-    out_bytes.seek(0)
-    return out_bytes.getvalue(), all_records
+    return all_worksheets
 
 # -----------------------------------------------------------------------------
-# STREAMLIT UI LAYOUT
+# EXCEL GENERATOR (SANGAT RAPIH DENGAN OPENPYXL / PANDAS)
 # -----------------------------------------------------------------------------
-st.title("🗺️ KMZ Fiberisasi Data Tagging Engine")
-st.caption("Engine pemroses data geospasial berbasis memory dengan integrasi Command_prompt.txt secara otomatis.")
+def generate_excel_bytes(worksheets_data: dict, kmz_filename: str) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for sheet_name, rows in worksheets_data.items():
+            df = pd.DataFrame(rows)
+            
+            if df.empty:
+                df = pd.DataFrame(columns=["NO", "MARKING", "LAT", "LONG", "REMARK"])
+            else:
+                df.insert(0, "NO", range(1, len(df) + 1))
+                df = df[["NO", "MARKING", "LAT", "LONG", "REMARK"]]
+
+            # Tulis data mulai baris ke-4 agar ada tempat untuk Header Utama
+            df.to_excel(writer, sheet_name=sheet_name, startrow=3, index=False)
+
+            # Styling Worksheet
+            ws = writer.sheets[sheet_name]
+            ws.cell(row=1, column=1, value="DATA KOORDINAT TIANG 7m,9m & TIANG EXISTING")
+            ws.cell(row=2, column=1, value=f"File Sumber: {kmz_filename}")
+
+    output.seek(0)
+    return output.getvalue()
+
+# -----------------------------------------------------------------------------
+# USER INTERFACE STREAMLIT
+# -----------------------------------------------------------------------------
+st.title("🗺️ KMZ/KML Intelligent Classifier & Excel Tagging Tool")
+st.caption("Aplikasi pemroses geospasial otomatis berdasarkan Aturan Baku Command_prompt.txt.")
 
 if EXTERNAL_RULES:
     with st.expander("📄 Rules Executed from Command_prompt.txt"):
-        st.code(EXTERNAL_RULES[:1000] + ("..." if len(EXTERNAL_RULES) > 1000 else ""), language="markdown")
+        st.code(EXTERNAL_RULES[:1200] + ("..." if len(EXTERNAL_RULES) > 1200 else ""), language="markdown")
 
-col_left, col_right = st.columns([1, 2])
+uploaded_file = st.file_uploader("Pilih File KMZ/KML Surveyor", type=["kmz", "kml"])
 
-with col_left:
-    st.subheader("⚙️ Input & Parameter")
-    site_name = st.text_input("Nama Site / Kluster", value="Mekarwangi_Bogor")
-    num_mode = st.radio("Penomoran Tiang", ["Sekuensial Global", "Sekuensial Per Tipe"])
-    uploaded_file = st.file_uploader("Unggah KMZ / KML Surveyor", type=["kmz", "kml"])
+if uploaded_file is not None:
+    st.info(f"File **{uploaded_file.name}** siap diproses.")
 
-with col_right:
-    st.subheader("📊 Output & Processing")
-    if uploaded_file is not None:
-        if st.button("⚡ PROSES DATA GEOSPASIAL", type="primary"):
-            with st.spinner("Memproses KML/KMZ di memory server..."):
-                file_ext = uploaded_file.name.split('.')[-1].lower()
-                if file_ext == "kmz":
-                    res_bytes, records = process_kmz_in_memory(uploaded_file, site_name)
-                    out_mime = "application/vnd.google-earth.kmz"
-                    out_name = f"TERSTRUKTUR_{uploaded_file.name}"
-                else:
-                    res_kml, records = process_kml_bytes(uploaded_file.getvalue(), site_name)
-                    res_bytes = res_kml
-                    out_mime = "application/vnd.google-earth.kml+xml"
-                    out_name = f"TERSTRUKTUR_{uploaded_file.name}"
+    if st.button("🚀 PROSES & KONVERSI DENGAN INTELLIGENT CLASSIFIER", type="primary"):
+        with st.spinner("Membaca struktur folder, placemark, & membuat multi-classification..."):
+            worksheets_result = process_kmz_file(uploaded_file)
+            excel_bytes = generate_excel_bytes(worksheets_result, uploaded_file.name)
 
-                st.success("Data berhasil dikompilasi secara terstruktur!")
+        st.success("✓ Konversi Berhasil! Data telah diklasifikasikan ke seluruh worksheet Excel.")
 
-                # Preview DataFrame Data Tagging
-                df = pd.DataFrame(records)
-                st.subheader("Preview Excel Data Tagging")
-                st.dataframe(df, use_container_width=True)
+        # Tampilkan Ringkasan Statistik
+        st.subheader("📊 Statistik Hasil Klasifikasi Multi-Category")
+        cols = st.columns(5)
+        for i, (sheet, rows) in enumerate(worksheets_result.items()):
+            cols[i].metric(sheet, f"{len(rows)} titik")
 
-                # Export Excel to Memory BytesIO
-                excel_buffer = io.BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name="Data Tagging Actual")
-                excel_buffer.seek(0)
+        # Preview Dataframe Tabbed
+        st.subheader("Preview Excel Worksheets")
+        tabs = st.tabs(list(worksheets_result.keys()))
+        for tab, (sheet_name, rows) in zip(tabs, worksheets_result.items()):
+            with tab:
+                df_preview = pd.DataFrame(rows)
+                if not df_preview.empty:
+                    df_preview.insert(0, "NO", range(1, len(df_preview) + 1))
+                st.dataframe(df_preview, use_container_width=True)
 
-                # Dual Download Buttons
-                btn1, btn2 = st.columns(2)
-                with btn1:
-                    st.download_button(
-                        label="📥 Download KMZ Terstruktur",
-                        data=res_bytes,
-                        file_name=out_name,
-                        mime=out_mime
-                    )
-                with btn2:
-                    st.download_button(
-                        label="📊 Download Excel Data Tagging",
-                        data=excel_buffer.getvalue(),
-                        file_name=f"DATA_TAGGING_{site_name}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+        # Download Button Excel
+        output_excel_name = f"Converted_{uploaded_file.name.replace('.kmz', '').replace('.kml', '')}.xlsx"
+        st.download_button(
+            label="📊 DOWNLOAD FILE EXCEL CLASSIFIED (.XLSX)",
+            data=excel_bytes,
+            file_name=output_excel_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
