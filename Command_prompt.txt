@@ -1,0 +1,608 @@
+Saya ingin membuat sebuah aplikasi desktop untuk Windows menggunakan Python yang berfungsi sebagai **KMZ/KML to Excel Converter & Intelligent Classifier**.
+
+Tujuan utama aplikasi ini adalah membaca file `.KMZ` yang berasal dari Google Earth Pro, mengambil seluruh data `Placemark`, nama titik, koordinat, struktur folder, dan informasi terkait lainnya, kemudian mengklasifikasikan data tersebut secara otomatis ke dalam beberapa worksheet Excel.
+
+Saya memiliki contoh file KMZ nyata bernama:
+
+`IF-JMB-MOCNPhase1-DF010.kmz`
+
+Gunakan file contoh tersebut sebagai bahan untuk memahami struktur data KMZ/KML. Jangan mengasumsikan bahwa semua data selalu memiliki struktur yang sama. Program harus dibuat cukup fleksibel terhadap variasi nama folder, nama Placemark, format penamaan titik, dan struktur KML.
+
+## 1. Fungsi utama aplikasi
+
+Aplikasi harus memiliki GUI sederhana sehingga pengguna tidak perlu menjalankan command line secara manual.
+
+Alur pengguna:
+
+1. Jalankan aplikasi.
+2. Muncul window aplikasi.
+3. Terdapat tombol:
+
+   * `Pilih File KMZ`
+   * `Proses / Convert`
+   * `Buka Folder Output`
+4. Pengguna memilih file `.kmz`.
+5. Aplikasi membaca dan menganalisis isi KMZ.
+6. Aplikasi mengekstrak file `.kml` di dalam KMZ secara otomatis.
+7. Program membaca seluruh struktur Folder dan Placemark.
+8. Program mengambil:
+
+   * Nama Placemark
+   * Folder induk
+   * Latitude
+   * Longitude
+   * Description jika tersedia
+   * Informasi lain yang relevan
+9. Program melakukan intelligent classification.
+10. Program menghasilkan satu file `.xlsx`.
+11. File Excel harus memiliki worksheet:
+
+* `Tiang`
+* `Acc Tiang`
+* `Slag Kabel`
+* `Closure`
+* `OTB, ODP`
+
+Semua worksheet tersebut harus tetap dibuat meskipun tidak ada data untuk kategori tersebut.
+
+## 2. Struktur Excel
+
+Setiap worksheet menggunakan kolom:
+
+`NO | MARKING | LAT | LONG | REMARK`
+
+Header utama Excel:
+
+`DATA KOORDINAT TIANG 7m,9m & TIANG EXISTING`
+
+Di bawah header utama tampilkan nama file KMZ yang sedang diproses.
+
+Data harus dibuat dalam format Excel yang rapi dan mudah dibaca.
+
+Gunakan:
+
+* bold untuk header
+* border pada tabel
+* automatic column width
+* alignment yang sesuai
+* freeze pane jika diperlukan
+* format koordinat yang konsisten
+
+## 3. Sistem klasifikasi
+
+Program tidak boleh hanya bergantung pada satu nama tertentu.
+
+Gunakan kombinasi:
+
+* nama Placemark
+* nama Folder
+* struktur parent folder
+* description
+* pola teks
+* keyword
+* regex
+
+Normalisasi teks terlebih dahulu:
+
+* ubah menjadi lowercase
+* trim spasi
+* normalisasi karakter yang tidak diperlukan
+
+### Kategori Tiang
+
+Identifikasi titik sebagai kategori `Tiang` jika terdapat indikasi seperti:
+
+* `NP`
+* `TE`
+* `Pole`
+* `New Pole`
+* `Existing Pole`
+
+Tetapi sistem harus lebih fleksibel terhadap variasi penulisan.
+
+Jika sebuah titik merupakan Tiang, titik tersebut juga harus masuk ke worksheet:
+
+`Acc Tiang`
+
+Jadi satu Placemark boleh masuk ke lebih dari satu worksheet apabila memang memenuhi beberapa kategori.
+
+## 4. Klasifikasi jenis Tiang
+
+Untuk worksheet `Tiang`, tentukan REMARK berdasarkan informasi yang tersedia.
+
+Contoh:
+
+Jika ditemukan:
+
+`Pole 7`
+
+maka:
+
+`New Pole 7M`
+
+Jika ditemukan:
+
+`Pole 9`
+
+maka:
+
+`New Pole 9M`
+
+Jika terdapat:
+
+* `Existing`
+* `Old`
+* `Existing Pole`
+
+maka:
+
+`Pole Existing`
+
+Jika terdapat pola seperti:
+
+`NP7`
+`NP 7`
+`NP-7`
+`NP_7`
+
+maka program harus dapat mengenalinya sebagai:
+
+`New Pole 7M`
+
+Begitu juga untuk:
+
+`NP9`
+`NP 9`
+`NP-9`
+`NP_9`
+
+menjadi:
+
+`New Pole 9M`
+
+Jangan hanya membuat regex untuk satu format. Buat regex yang toleran terhadap spasi, underscore, dash, dan variasi penulisan.
+
+Jika sistem menemukan NP dengan ukuran lain, misalnya NP8, jangan membuang data. Gunakan:
+
+`New Pole 8M`
+
+atau sesuai angka yang ditemukan.
+
+## 5. Kategori Slag Kabel / Slack
+
+Program harus mendeteksi variasi seperti:
+
+* `slag`
+* `slack`
+* `slak`
+* `slk`
+* `hanger`
+* `hgr`
+* dan variasi penamaan lain yang secara jelas mengindikasikan Slack Support.
+
+Jika terdeteksi sebagai kategori tersebut, masukkan ke worksheet:
+
+`Slag Kabel`
+
+MARKING default:
+
+`Slack Support`
+
+Jika nama atau folder mengindikasikan titik existing, misalnya:
+
+* `EX`
+* `EKS`
+* `OLD`
+* `EXIST`
+
+maka REMARK:
+
+`Eks Slack Support`
+
+Jika tidak:
+
+`New Slack Support`
+
+## 6. Kategori Closure
+
+Deteksi variasi:
+
+* `closure`
+* `clo`
+* `cls`
+* `clsr`
+
+dan variasi yang relevan.
+
+Masukkan ke worksheet:
+
+`Closure`
+
+MARKING:
+
+`CL24`
+
+Jika merupakan existing berdasarkan nama/folder/description, gunakan:
+
+`Eks Closure`
+
+Jika bukan existing:
+
+`New Closure`
+
+## 7. Kategori OTB / ODP
+
+Deteksi keyword seperti:
+
+* `OTB`
+* `ODP`
+* `ACPBD`
+* `DP`
+
+dan variasi penamaan yang relevan.
+
+Masukkan data ke:
+
+`OTB, ODP`
+
+Untuk kategori ini, jangan sembarangan mengganti MARKING.
+
+Jika Placemark memiliki `<description>`, gunakan isi description sebagai MARKING.
+
+Jika description kosong, gunakan nama Placemark.
+
+REMARK dapat menggunakan nama asli Placemark atau informasi yang paling relevan dari data sumber.
+
+## 8. Multi-classification
+
+Ini sangat penting.
+
+Satu Placemark BOLEH masuk ke lebih dari satu worksheet apabila memenuhi lebih dari satu kategori.
+
+Contoh:
+
+Jika suatu titik memiliki nama/folder yang menunjukkan bahwa titik tersebut merupakan:
+
+`NP7 Pole`
+
+maka titik tersebut masuk ke:
+
+`Tiang`
+
+dan:
+
+`Acc Tiang`
+
+Jangan menggunakan sistem `if / elif` yang membuat satu titik hanya boleh masuk satu kategori.
+
+Gunakan sistem classification berbasis `set/list` sehingga beberapa kategori dapat aktif sekaligus.
+
+## 9. Folder hierarchy
+
+Saat membaca KML, jangan hanya membaca nama Placemark.
+
+Simpan juga seluruh hierarchy Folder.
+
+Contoh:
+
+Document
+→ Backbone
+→ Pole
+→ Existing
+→ Placemark
+
+Gabungkan nama folder tersebut sebagai konteks untuk klasifikasi.
+
+Jika nama Placemark tidak cukup jelas tetapi nama Folder memberikan informasi kategori, gunakan informasi Folder tersebut.
+
+Contohnya:
+
+Folder:
+
+`Pole Existing`
+
+Placemark:
+
+`P-001`
+
+maka sistem tetap dapat mengenali bahwa titik tersebut merupakan Existing Pole.
+
+## 10. Koordinat
+
+Dari elemen KML:
+
+`<coordinates>longitude,latitude,altitude</coordinates>`
+
+ambil:
+
+* longitude
+* latitude
+
+Masukkan ke Excel dengan urutan:
+
+`LAT`
+`LONG`
+
+Jangan sampai longitude dan latitude tertukar.
+
+Altitude tidak perlu dimasukkan ke Excel kecuali memang diperlukan.
+
+Jika koordinat rusak atau tidak valid, jangan membuat aplikasi crash.
+
+Lewati data tersebut dan catat sebagai warning/log.
+
+## 11. Penanganan data kosong
+
+Jika suatu worksheet tidak memiliki data, worksheet tetap harus dibuat.
+
+Contoh:
+
+`Closure`
+
+tetap dibuat walaupun jumlah datanya 0.
+
+Header dan format tetap ada.
+
+## 12. Validasi dan error handling
+
+Aplikasi harus menangani:
+
+* file bukan KMZ
+* KMZ corrupt
+* KMZ tidak memiliki KML
+* KML tidak valid
+* Placemark tidak memiliki nama
+* Placemark tidak memiliki koordinat
+* koordinat tidak valid
+* description kosong
+* Folder kosong
+* nama file mengandung spasi
+* nama file mengandung karakter khusus
+* duplicate Placemark
+* KML menggunakan namespace
+* struktur KML yang tidak standar
+
+Jangan membuat aplikasi crash hanya karena satu Placemark bermasalah.
+
+Gunakan logging atau status informasi pada GUI.
+
+## 13. Output filename
+
+Jika file input:
+
+`IF-JMB-MOCNPhase1-DF010.kmz`
+
+maka output default:
+
+`Converted_IF-JMB-MOCNPhase1-DF010.xlsx`
+
+Simpan output pada folder yang mudah ditemukan.
+
+Berikan pilihan kepada pengguna untuk menentukan lokasi output apabila memungkinkan.
+
+## 14. GUI
+
+Gunakan GUI yang sederhana dan ringan.
+
+Boleh menggunakan:
+
+`tkinter`
+
+Tidak perlu menggunakan framework GUI yang berat.
+
+Desain:
+
+---
+
+KMZ → EXCEL INTELLIGENT CLASSIFIER
+
+File KMZ:
+[____________________________] [Pilih File]
+
+Output:
+[____________________________] [Pilih Folder]
+
+[          CONVERT / PROSES          ]
+
+Status:
+Menunggu file...
+
+Progress:
+████████████████░░░░ 80%
+
+---
+
+Setelah selesai:
+
+`✓ Konversi berhasil`
+
+`File output: Converted_IF-JMB-MOCNPhase1-DF010.xlsx`
+
+Tambahkan tombol:
+
+`Buka Folder Output`
+
+## 15. Progress
+
+Jika memungkinkan, tampilkan progress:
+
+* Membaca KMZ
+* Mengekstrak KML
+* Membaca Placemark
+* Menganalisis klasifikasi
+* Membuat Excel
+* Selesai
+
+Jangan membuat GUI freeze ketika proses berlangsung.
+
+Jika diperlukan, jalankan proses conversion pada thread/background worker.
+
+## 16. Statistik hasil
+
+Setelah selesai, tampilkan statistik seperti:
+
+Total Placemark:
+XXX
+
+Tiang:
+XX
+
+Acc Tiang:
+XX
+
+Slag Kabel:
+XX
+
+Closure:
+XX
+
+OTB / ODP:
+XX
+
+Jika satu titik masuk ke beberapa kategori, jelaskan bahwa total kategori dapat lebih besar daripada total Placemark karena sistem menggunakan multi-classification.
+
+## 17. Excel formatting
+
+Gunakan `pandas` dan `xlsxwriter`.
+
+Worksheet harus memiliki:
+
+Baris 1:
+`DATA KOORDINAT TIANG 7m,9m & TIANG EXISTING`
+
+Baris 2:
+nama file KMZ
+
+Baris 3:
+`NO | MARKING | LAT | LONG | REMARK`
+
+Data dimulai dari baris berikutnya.
+
+Gunakan:
+
+* bold header
+* border
+* automatic column width
+* alignment
+* freeze pane
+* autofilter jika sesuai
+* formula jumlah data jika diperlukan
+
+Untuk worksheet `Acc Tiang`, jika memang mengikuti sistem lama, jumlah dapat menggunakan formula khusus yang diperlukan oleh workflow tersebut.
+
+## 18. Jangan mengubah data sumber secara sembarangan
+
+Nama Placemark dan description harus dipertahankan sebagai data sumber.
+
+Classification hanya menentukan ke worksheet mana data ditempatkan dan bagaimana REMARK dibuat.
+
+Jangan menghapus data hanya karena program tidak mengenali kategorinya.
+
+Jika tidak dikenali, simpan sebagai log/warning agar dapat diperiksa pengguna.
+
+## 19. Analisis contoh KMZ
+
+Sebelum menulis kode final, analisis terlebih dahulu file:
+
+`IF-JMB-MOCNPhase1-DF010.kmz`
+
+Periksa:
+
+* struktur folder
+* nama Placemark
+* format coordinates
+* description
+* pola penamaan
+* existing/new indicator
+* jenis pole
+* closure
+* slack
+* OTB
+* ODP
+* style ID jika berguna sebagai informasi tambahan
+
+Gunakan hasil analisis tersebut untuk meningkatkan algoritma classification.
+
+Jangan hanya mengandalkan keyword sederhana apabila struktur file menunjukkan pola yang lebih baik.
+
+## 20. Arsitektur kode
+
+Pisahkan fungsi agar mudah dikembangkan.
+
+Minimal gunakan fungsi seperti:
+
+`extract_kml()`
+
+`parse_kml()`
+
+`walk_folders()`
+
+`extract_placemarks()`
+
+`normalize_text()`
+
+`classify_placemark()`
+
+`classify_tiang()`
+
+`classify_slack()`
+
+`classify_closure()`
+
+`classify_otb_odp()`
+
+`extract_coordinates()`
+
+`build_excel()`
+
+`create_gui()`
+
+`main()`
+
+Gunakan struktur kode yang bersih dan mudah dirawat.
+
+## 21. Prinsip penting
+
+Jangan membuat program hanya untuk file contoh.
+
+Program harus dirancang sebagai converter yang dapat digunakan untuk banyak file KMZ proyek berikutnya.
+
+Prioritas:
+
+1. Akurasi klasifikasi.
+2. Tidak kehilangan data.
+3. Multi-classification.
+4. Koordinat tidak tertukar.
+5. Excel rapi.
+6. GUI mudah digunakan.
+7. Error handling kuat.
+8. Bisa digunakan berulang kali untuk file KMZ berbeda.
+
+## 22. Hasil akhir yang saya inginkan
+
+Saya ingin mendapatkan aplikasi yang setelah dijalankan memungkinkan saya melakukan:
+
+`Pilih KMZ → Convert → Excel selesai`
+
+Tanpa harus membuka source code.
+
+Jika memungkinkan, setelah aplikasi Python selesai, berikan juga instruksi untuk membuat executable:
+
+`KMZ_to_Excel.exe`
+
+menggunakan PyInstaller.
+
+Target akhirnya adalah aplikasi Windows portable yang bisa saya gunakan untuk pekerjaan sehari-hari.
+
+Sebelum memberikan kode final, jelaskan terlebih dahulu:
+
+1. Struktur KMZ yang ditemukan.
+2. Pola klasifikasi yang ditemukan.
+3. Potensi masalah pada data.
+4. Strategi classification yang akan digunakan.
+5. Struktur folder project.
+6. Dependency yang dibutuhkan.
+
+Setelah itu berikan kode lengkap yang siap dijalankan, bukan hanya potongan kode.
+
+Pastikan seluruh kode konsisten, tidak ada fungsi yang hilang, tidak ada import yang kurang, dan dapat dijalankan dari awal sampai menghasilkan file Excel.
